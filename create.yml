@@ -1,0 +1,243 @@
+---
+- name: Create Openshift cluster on IBM Cloud VPC
+  hosts: localhost
+  collections:
+   - ibm.cloudcollection
+
+  tasks:
+    - name: Fetch the variables from var file
+      include_vars:
+        file: vars.yml
+
+    - name: Set generic  facts
+      set_fact:
+        cacheable: True
+        cos_exists: false
+        cluster_exists: False
+        pgw_exists: False
+        cos_instance_crn: ""    
+        cluster_name:  "{% if cluster_name != '' %} {{cluster_name | trim}} {% else %} {{ name_prefix }}-cluster {% endif %}"   
+        cos_name: "{% if objstorage_name != '' %} {{objstorage_name | trim}} {% else %} {{ name_prefix }}-cos {% endif %}"  
+        #vpc_pgw_name:  "{% if pgw_name != '' %} {{pgw_name | trim}} {% else %} {{ name_prefix }}-pgw {% endif %}  "               
+        vpc_pgw_name:  "{{ name_prefix }}-pgw"
+
+    - name: Print Names
+      debug:
+        msg: "Cluster : {{cluster_name}},  COS : {{cos_name}}, Gateway: {{vpc_pgw_name}}"
+        
+    - name: Fetch resource group id
+      ibm_resource_group_info: 
+        name: "{{rg_name}}"
+      failed_when:
+        - rg_output.rc != 0
+      register: rg_output
+    
+    - name: Save Resource Group as fact
+      set_fact:
+        cacheable: True
+        resource_group_id : "{{rg_output.resource.id | trim}}" 
+      when: rg_output.rc == 0
+
+    - name: Print Resource Group ID
+      debug:
+        msg: "Resource group output : {{rg_output.resource.id}}"
+   
+    - name: Check if cluster Exists
+      ibm_container_vpc_cluster_info:
+        name: "{{ cluster_name | trim }}"         
+      failed_when:
+        - cluster_output.rc != 0
+        - '"The specified cluster could not be found" not in cluster_output.stderr'
+      register: cluster_output
+      
+    - name: Print Existing Cluster Deatils
+      debug:
+        msg: "Cluster output : {{ cluster_output }}"
+
+    - name: Set Cluster status
+      set_fact:
+        cacheable: True
+        cluster_exists: True
+      when: cluster_output.rc == 0
+
+    - name: Create VPC
+      ibm_is_vpc:
+        name: "{{ name_prefix }}-vpc"
+        region: "{{region}}"
+        state: available
+        id: "{{ vpc.id | default(omit) }}"
+        resource_group: "{{resource_group_id | trim}}"        
+      register: vpc_create_output
+      when: not cluster_exists
+
+    - name: Save VPC details as fact
+      set_fact:
+        cacheable: True
+        vpc: "{{ vpc_create_output.resource }}"
+      when: not cluster_exists
+
+    - name: Get Public Gateway Details
+      ibm_is_public_gateway_info: 
+        name: "{{vpc_pgw_name | trim}}"      
+        region: "{{region}}"  
+        resource_group: "{{resource_group_id | trim}}"        
+      ignore_errors: true   
+      register: pgw_output
+
+    - name: Save Public Gateway details as fact
+      set_fact:
+        cacheable: True
+        vpc_pgw_id : "{{ pgw_output.resource.id }}"
+        pgw_exists: True
+      when: 
+        - pgw_output.rc == 0        
+
+    - name: Print Public Gateway Deatils
+      debug:
+        msg: "Public Gateway exists : {{pgw_exists}}"    
+
+    - name: Create VPC Public Gateway
+      ibm_is_public_gateway:
+        name: "{{ vpc_pgw_name | trim }}"
+        vpc: "{{ vpc.id }}"        
+        resource_group : "{{rg_output.resource.id | trim}}"         
+        state: available
+        zone: "{{ zone }}"
+      register: pgw_new
+      when: 
+        - not pgw_exists
+        - not cluster_exists 
+
+    - name: Save VPC Public Gateway details as fact
+      set_fact:
+        cacheable: True
+        vpc_pgw_id: "{% if pgw_new.rc == 0 %} {{pgw_new.resource.id}}  {% endif %}"
+      when: 
+        - not pgw_exists
+        - not cluster_exists 
+
+    - name: Print Public Gateway ID
+      debug:
+        msg: "Public Gateway vpc_pgw_id  : {{vpc_pgw_id}}"
+      when: 
+        - not pgw_exists      
+        - not cluster_exists         
+
+    - name: Create VPC Subnet
+      ibm_is_subnet:
+        name: "{{ name_prefix }}-subnet"
+        state: available
+        id: "{{ subnet.id | default(omit) }}"
+        vpc: "{{ vpc.id }}"
+        resource_group: "{{resource_group_id | trim}}"                
+        total_ipv4_address_count: "{{ total_ipv4_address_count }}"
+        public_gateway: "{{vpc_pgw_id | trim}}"        
+        region: "{{region}}"        
+        zone: "{{ zone }}"
+      register: subnet_create_output
+      when: not cluster_exists       
+
+    - name: Save VPC Subnet details as fact
+      set_fact:
+        cacheable: True
+        subnet: "{{ subnet_create_output.resource }}"
+      when: not cluster_exists       
+
+    - name: Check if object storage Exists
+      ibm_resource_instance_info:
+        name: "{{cos_name|trim }}"
+        location: "global"
+      ignore_errors: true
+      register: storage_output
+
+    - name: Print Object Stroage details
+      debug:
+        msg: "storage output : {{ storage_output }}"
+
+    - name: Save Object Storage details as fact
+      set_fact:
+        cacheable: True
+        cos_exists: true
+        cos_instance_crn: "{{ storage_output.resource.crn }}"
+      when:
+        - storage_output.rc == 0        
+
+    - name: Cloud Object storage
+      ibm_resource_instance:
+        name: "{{ cos_name | trim}}"
+        service: "{{ objstorage_service }}"
+        plan: "{{ objstorage_plan }}"
+        location: "global"
+      register: cos_instance_new
+      when:
+        - cos_exists is false
+        -  not cluster_exists   
+            
+    - name: Set COS CRN
+      set_fact:
+        cacheable: True
+        cos_instance_crn: "{% if cos_exists %} {{cos_instance_crn}} {% else %} {{cos_instance_new.resource.crn}} {% endif %}  "
+      when: not cluster_exists   
+      
+
+    - name: Print COS Instance details
+      debug:
+        msg: "cos_instance crn :  {{cos_instance_crn}}"
+      when: not cluster_exists       
+    
+    - name: Going to start Cluster creation
+      debug:
+        msg: "Creating cluster  : {{ cluster_name}} "
+      when: not cluster_exists         
+
+    - name: Create Openshift Cluster
+      ibm_container_vpc_cluster:
+        name: "{{ cluster_name | trim}}"
+        kube_version: "{{ kube_version }}"
+        flavor: "{{ flavor }}"
+        worker_count: "{{ worker_count }}"
+        vpc_id: "{{ vpc.id }}"
+        entitlement: "{{ entitlement }}"
+        resource_group_id: "{{resource_group_id | trim}}"
+        cos_instance_crn: "{{cos_instance_crn | trim}}"
+        zones:
+          - {"subnet_id": "{{ subnet.id }}", "name": "{{ zone }}"}
+        wait_till: "OneWorkerNodeReady"
+      register: new_cluster_create_output
+      ignore_errors: true      
+      when: not cluster_exists
+
+    - name: Set Cluster status
+      set_fact:
+        cacheable: True
+        cluster_exists: True
+      when: 
+        - not cluster_exists 
+        - new_cluster_create_output.rc == 0
+
+    - name: Get Cluster Info 
+      ibm_container_vpc_cluster_info:
+        name: "{{ cluster_name | trim}}"         
+      failed_when:
+        - cluster_info.rc != 0
+        - '"cluster could not be found" not in cluster_info.stderr'
+      register: cluster_info
+      when: cluster_exists
+      
+    - name: Print Cluster status 
+      debug:
+        msg: "Ingress took longer than expected, but the cluster is Ready:  {{ cluster_name}}"
+      when: 
+        - cluster_exists
+        - cluster_info.resource.status == 'Ready' 
+        - cluster_info.resource.ingress_hostname == ''                    
+
+    - name: Save created cluster info as fact
+      set_fact:
+        cacheable: True
+        cluster_info: "{{ cluster_info.resource }}"
+      when: cluster_exists
+
+    - name: Print Cluster info
+      debug:
+        msg: "cluster : {{ cluster_info }}"

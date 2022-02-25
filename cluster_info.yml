@@ -1,0 +1,46 @@
+---
+- name: Create Openshift cluster on IBM Cloud VPC
+  hosts: localhost
+  collections:
+   - ibm.cloudcollection
+  tasks:
+    - name: Fetch the variables from var file
+      include_vars:
+        file: vars.yml
+
+    - name: Set generic  facts
+      set_fact:
+        cacheable: True
+        cluster_name:  "{% if cluster_name != '' %} {{cluster_name | trim}} {% else %} {{ name_prefix }}-cluster {% endif %}  "   
+
+    - name: Get Cluster Info
+      ibm_container_vpc_cluster_info:
+        name: "{{ cluster_name | trim }}"
+      register: cluster_output
+      
+    - name: Save created cluster info as fact
+      set_fact:
+        cacheable: True
+        cluster_info: "{{ cluster_output.resource }}"
+      when: cluster_output.resource.id is defined
+  
+    - name: Print Cluster info
+      debug:
+        msg: "cluster : {{ cluster_info }}"
+      
+
+    - name: Save Cluster config File
+      ibm_container_cluster_config_info:
+        cluster_name_id: "{{cluster_info.id}}"
+      register: config_output
+
+    - name: Save cluster config path as fact
+      set_fact:
+        cacheable: True
+        cluster_config: "{{ config_output.resource }}"
+      when: config_output.rc==0
+
+    - name: Print Clustet config file path
+      debug:
+        msg: "cluster config file path : {{ cluster_config.config_file_path }}"
+      when: config_output.rc==0

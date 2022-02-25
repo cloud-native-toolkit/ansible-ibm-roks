@@ -1,0 +1,161 @@
+- name: Delete openshift cluster on VPC infra.
+  hosts: localhost
+  collections:
+   - ibm.cloudcollection
+  tasks:
+    - name: Fetch the variables from var file
+      include_vars:
+        file: vars.yml
+        
+    - name: Set generic  fact
+      set_fact:
+        cacheable: True
+        cos_exists: false
+        cluster_exists: True
+        cos_instance_crn: ""    
+        cluster_name:  "{% if cluster_name != '' %} {{cluster_name | trim}} {% else %} {{ name_prefix }}-cluster {% endif %}"   
+        cos_name: "{% if objstorage_name != '' %} {{objstorage_name | trim}} {% else %} {{ name_prefix }}-cos {% endif %}"  
+        vpc_pgw_name:  "{{ name_prefix }}-pgw"
+
+    - name: Fetch resource group id
+      ibm_resource_group_info: 
+        name: "{{rg_name}}"
+      failed_when:
+        - rg_output.rc != 0
+      register: rg_output
+    
+
+    - name: Save Resource Group as fact
+      set_fact:
+        cacheable: True
+        resource_group_id : "{{rg_output.resource.id | trim}}" 
+      when: rg_output.rc == 0
+
+    - name: Print Resource Group ID
+      debug:
+        msg: "Resource group output : {{rg_output.resource.id}}"
+    
+    - name: Check if cluster Exists
+      ibm_container_vpc_cluster_info:
+        name: "{{ cluster_name | trim}}"
+      failed_when:
+        - cluster_output.rc != 0
+        - '"cluster could not be found" not in cluster_output.stderr'
+      register: cluster_output
+
+    - name: Save Cluster info as fact
+      set_fact:
+        cacheable: True
+        cluster_info: "{{ cluster_output.resource }}"
+      when: cluster_output.rc==0
+
+    - name: Get the VPC details
+      ibm_is_vpc_info:
+        name: "{{ name_prefix }}-vpc"
+        region: "{{region}}"        
+      register: vpc_output
+      when: cluster_output.rc==0
+
+    - name: Set VPC in fact
+      set_fact:
+        cacheable: True
+        vpc: "{{ vpc_output.resource }}"
+      when: cluster_output.rc==0        
+
+    - name: Get Public Gateway Details
+      ibm_is_public_gateway_info: 
+        name: "{{vpc_pgw_name | trim}}"      
+        region: "{{region}}"  
+        resource_group: "{{resource_group_id | trim}}"        
+      ignore_errors: true   
+      register: pgw_output
+      when: cluster_output.rc == 0    
+
+    - name: Set PGW in fact
+      set_fact:
+        cacheable: True
+        pgw: "{{ pgw_output.resource }}"
+      when: cluster_output.rc==0        
+
+    - name: Create empty subnet list   # caters for no subnets to delete
+      set_fact:
+        subnetList: []
+
+    - name: Parse for subnet info
+      set_fact:
+        subnetList: "{{ subnetList + [{ 'name':item.name, 'id':item.id, 'zone':item.zone  }] }}"
+      loop: "{{ vpc.subnets }}"
+      when: 'name_prefix is in item.name'
+  
+
+    - name: Create list of zones
+      set_fact:
+        zoneList: "{{ zoneList | default([]) + [{ 'subnet_id': item.id, 'name':item.zone }]  }}"
+      loop: "{{ subnetList }}"
+
+    - name: Get object storage info
+      ibm_resource_instance_info:
+        name: "{{ cos_name | trim }}"
+        location: "global"
+      register: storage_output
+
+    - name: Set COS in fact
+      set_fact:
+        cacheable: True
+        cos: "{{ storage_output.resource }}"
+
+    - name: Prompt to proceed with cluster deletion
+      pause: 
+        prompt: "This will destroy the ROKS cluster, {{ cluster_info.name }}, together with associated VPC, COS and Subnet. Are you sure you want to proceed [y/N]?"
+      register: response
+
+    - fail: 
+        msg: "Exiting"
+      when: 
+        - (response.user_input != "Yes") 
+        - (response.user_input != "yes") 
+        - (response.user_input != "Y") 
+        - (response.user_input != "y")
+        
+    - name: Destroy Openshift Cluster
+      ibm_container_vpc_cluster:
+        name: "{{ cluster_info.name }}"
+        id: "{{ cluster_info.id }}"
+        zones: "{{ zoneList }}"
+        state: absent
+      register: cluster_destroy_output
+      when: cluster_info.id is defined
+
+    - name: Destroy storage resource instance
+      ibm_resource_instance:
+        name: "{{ cos.name }}"
+        location: "global"
+        service: "{{ objstorage_service }}"
+        plan: "{{ objstorage_plan }}"
+        id: "{{ cos.id }}"
+        state: absent
+      register: resource_instance_output
+      when: cos.id is defined
+
+    - name: Remove Publig Gateway
+      ibm_is_public_gateway:
+        state: absent      
+        name: "{{ vpc_pgw_name | trim }}"
+        zone: "{{ zone }}"
+        vpc: "{{ vpc.id }}"      
+      when: pgw is defined
+    
+    - name: Remove VPC Subnet
+      ibm_is_subnet:
+        state: absent
+        id: "{{ item.id }}"
+        region: "{{region}}"        
+      loop: "{{ subnetList }}"
+      when: subnetList is defined
+
+    - name: Remove VPC
+      ibm_is_vpc:
+        state: absent
+        id: "{{ vpc.id }}"
+        region: "{{region}}"   
+      when: vpc.id is defined
