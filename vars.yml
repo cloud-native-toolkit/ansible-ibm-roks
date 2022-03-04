@@ -1,14 +1,14 @@
 ---
-region: us-south
+region: us-east
 name_prefix: "ans-ij"
-zone: us-south-3
+zone: us-east-3
 rg_name: "Default" #Provide Resource Group name in which the resources to be provisioned
 cluster_name: '' #If cluster_name ='' then script will generate using the {{ name_prefix }}-cluster
 flavor: "bx2.4x16"
 worker_count: "2"
 entitlement: "cloud_pak" # Required to use IBM Cloud pak entitlements. 
-kube_version: "4.8.26_openshift"
-objstorage_name: '' #If objstorage_name ='' then script will generate using the {{ name_prefix }}-cos
+kube_version: "4.8.31_openshift"
+objstorage_name: "" #If objstorage_name ='' then script will generate using the {{ name_prefix }}-cos
 objstorage_service: "cloud-object-storage"
 objstorage_plan: "standard"
 total_ipv4_address_count: 256

@@ -12,12 +12,12 @@
     - name: Set generic  facts
       set_fact:
         cacheable: True
-        cos_exists: false
+        cos_exists: False
         cluster_exists: False
         pgw_exists: False
         cos_instance_crn: ""    
-        cluster_name:  "{% if cluster_name != '' %} {{cluster_name | trim}} {% else %} {{ name_prefix }}-cluster {% endif %}"   
-        cos_name: "{% if objstorage_name != '' %} {{objstorage_name | trim}} {% else %} {{ name_prefix }}-cos {% endif %}"  
+        cluster_name:  "{% if cluster_name != \"\"  %} {{cluster_name | trim}} {% else %} {{ name_prefix }}-cluster {% endif %}"   
+        cos_name: "{% if objstorage_name != \"\" %} {{objstorage_name | trim}} {% else %} {{ name_prefix }}-cos {% endif %}"  
         #vpc_pgw_name:  "{% if pgw_name != '' %} {{pgw_name | trim}} {% else %} {{ name_prefix }}-pgw {% endif %}  "               
         vpc_pgw_name:  "{{ name_prefix }}-pgw"
 
@@ -70,11 +70,22 @@
       register: vpc_create_output
       when: not cluster_exists
 
+      # - name: Print VPC ID
+      #debug:
+      # msg: "VPC ID : {{ vpc.id }}"    
+      # when: not cluster_exists        
+
     - name: Save VPC details as fact
       set_fact:
         cacheable: True
         vpc: "{{ vpc_create_output.resource }}"
       when: not cluster_exists
+
+    - name: Print VPC ID
+      debug:
+        msg: "VPC ID : {{ vpc.id }}"
+      when: not cluster_exists
+  
 
     - name: Get Public Gateway Details
       ibm_is_public_gateway_info: 
@@ -100,6 +111,7 @@
       ibm_is_public_gateway:
         name: "{{ vpc_pgw_name | trim }}"
         vpc: "{{ vpc.id }}"        
+        region: "{{ region }}"
         resource_group : "{{rg_output.resource.id | trim}}"         
         state: available
         zone: "{{ zone }}"
@@ -157,7 +169,7 @@
     - name: Save Object Storage details as fact
       set_fact:
         cacheable: True
-        cos_exists: true
+        cos_exists: True
         cos_instance_crn: "{{ storage_output.resource.crn }}"
       when:
         - storage_output.rc == 0        
@@ -170,8 +182,8 @@
         location: "global"
       register: cos_instance_new
       when:
-        - cos_exists is false
-        -  not cluster_exists   
+        - not cos_exists
+        - not cluster_exists   
             
     - name: Set COS CRN
       set_fact:
