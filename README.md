@@ -40,7 +40,23 @@ The following parameters can be set by the user in vars.yml
 * `objstorage_name`: Provide an empty string '' to generate the default object storage name by script which looks like {{name_prefix }}-cos and provisions the same. To use an existing instance name,  provide the name.
 
 
+## Prerequisites
 
+1. Install [Python3]
+
+2. [RedHat Ansible] 2.9+
+
+    ```
+    pip install "ansible>=2.9.2"
+    ```
+    
+## Install
+
+1. Download and Install collection
+
+    ```
+    ansible-galaxy collection install ibm.cloudcollection
+    ```
 ## Running
 
 ### Set API Key and Region
