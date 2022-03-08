@@ -97,6 +97,7 @@ The following parameters can be set by the user in vars.yml
     ansible-playbook destroy.yml
     ```
 [Obtain an IBM Cloud API key]:https://cloud.ibm.com/docs/iam?topic=iam-userapikey
+[Python3]: https://www.python.org/downloads/
 
 # Known issues
 Destory playbook may come out while performing vpc deletion task which is last one with an error : "The VPC is in use and cannot be deleted".  This is due to the Public Gateway is not getting detached from VPC through the script.  Will be fixing in later version, till then please detach and delete manually. 
